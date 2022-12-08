@@ -1,18 +1,18 @@
 clear;
 N = 10^4; % number of symbols
-Eb_N0_dB = [0:5:30]; % multiple Eb/N0 values
+Eb_N0_dB = [0:3:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
 
-ip = (2*(rand(1,N)>0.5)-1) + 1j*(2*(rand(1,N)>0.5)-1);
+ip = [(2*(rand(1,N)>0.5)-1) + 1j*(2*(rand(1,N)>0.5)-1)];
 
 x_ = reshape(ip, [Nt, N/Nt]);
 
 
 for Eb_idx = 1:length(Eb_N0_dB)
     disp(Eb_N0_dB(Eb_idx));
-    P = sqrt(10^(Eb_N0_dB(Eb_idx)/10))/sqrt(2)/sqrt(Nt);
-    x = P * x_; % normalization of energy to P
+    P = sqrt((10^(Eb_N0_dB(Eb_idx)/10))/Nt);
+    x = P/sqrt(2) * x_; % normalization of energy to P
     cnt_zf = 0;
     cnt_mmse = 0;
     cnt_ml = 0;
@@ -24,7 +24,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
 
 
         w_zf = inv(h'* h) * h';
-        w_mmse = inv(h'*h + 1/P^2)*h';
+        w_mmse = inv(h'*h + 1/P^2*eye(Nt))*h';
 
         ml_demod = ml_detector(h, y, P, Nt);
 
@@ -57,10 +57,11 @@ xlabel('SNR[dB]')
 ylabel('SER');
 ylim([10^-3.5 10^0]);
 title('4 x 4 MIMO, QPSK');
+grid on
 
 
 function hat = ml_detector(h, y, P, Nt)
-    qam_table = P * [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
+    qam_table = P/sqrt(2) * [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
     xx = zeros(Nt, 1);
     x_ = zeros(Nt, 1, length(qam_table).^Nt);
 
@@ -88,8 +89,8 @@ end
 function ipHat = qam_demod(input)
     y_re = real(input);
     y_im = imag(input);
-    ipHat(find(y_re < 0 & y_im < 0)) = -1-1*1j;
-    ipHat(find(y_re > 0 & y_im > 0)) = 1+1*1j;
-    ipHat(find(y_re < 0 & y_im > 0)) = -1+1*1j;
-    ipHat(find(y_re > 0 & y_im < 0)) = 1-1*1j;
+    ipHat(find(y_re < 0 & y_im < 0)) = (-1-1*1j);
+    ipHat(find(y_re > 0 & y_im > 0)) = (1+1*1j);
+    ipHat(find(y_re < 0 & y_im > 0)) = (-1+1*1j);
+    ipHat(find(y_re > 0 & y_im < 0)) = (1-1*1j);
 end
