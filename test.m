@@ -1,32 +1,32 @@
 clear;
-P = 1;
-N = 10^5; % number of symbols
-Eb_N0_dB = [0:6:30]; % multiple Eb/N0 values
+N = 10^4; % number of symbols
+Eb_N0_dB = [0:5:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
 
 ip = (2*(rand(1,N)>0.5)-1) + 1j*(2*(rand(1,N)>0.5)-1);
 
 x_ = reshape(ip, [Nt, N/Nt]);
-x = P * (1/sqrt(2))*x_; % normalization of energy to P
 
-h = 1/sqrt(2)*[randn(Nr, Nt, N/Nt) + 1j*randn(Nr, Nt, N/Nt)]; % Rayleigh channel
-n = 1/sqrt(2)*[randn(Nr, N/Nt) + 1j*randn(Nr, N/Nt)]; % white gaussian noise, 0dB variance
 
 for Eb_idx = 1:length(Eb_N0_dB)
     disp(Eb_N0_dB(Eb_idx));
+    P = sqrt(10^(Eb_N0_dB(Eb_idx)/10))/sqrt(2)/sqrt(Nt);
+    x = P * x_; % normalization of energy to P
     cnt_zf = 0;
     cnt_mmse = 0;
     cnt_ml = 0;
     for idx = 1:N/Nt
     % Channel and noise Noise addition
+        h = 1/sqrt(2)*[randn(Nr, Nt) + 1j*randn(Nr, Nt)]; % Rayleigh channel
+        n = 1/sqrt(2)*[randn(Nr,1) + 1j*randn(Nr,1)];  % white gaussian noise, 0dB variance
+        y = h*x(:,idx) + n;
 
-        y = h(:,:,idx)*x(:,idx) + 10^(-Eb_N0_dB(Eb_idx)/20)*n(:,idx);
 
-        w_zf = inv(h(:,:,idx)'* h(:,:,idx)) * h(:,:,idx)';
-        w_mmse = inv(h(:,:,idx)'*h(:,:,idx) + 10^(-Eb_N0_dB(Eb_idx)/10)/Nt * eye(Nt))*h(:,:,idx)';
+        w_zf = inv(h'* h) * h';
+        w_mmse = inv(h'*h + 1/P^2)*h';
 
-        ml_demod = ml_detector(h(:,:,idx), y, Nt);
+        ml_demod = ml_detector(h, y, P, Nt);
 
         zf_demod_ = qam_demod(w_zf * y);
         zf_demod = reshape(zf_demod_,[Nt, 1]);
@@ -35,7 +35,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
         mmse_demod = reshape(mmse_demod_,[Nt, 1]);
 
 
-        cnt_ml = cnt_ml + sum(x_(:,idx)~=ml_demod,"all");
+        cnt_ml = cnt_ml + sum(x(:,idx)~=ml_demod,"all");
         cnt_zf = cnt_zf + sum(x_(:,idx)~=zf_demod,"all");
         cnt_mmse = cnt_mmse + sum(x_(:,idx)~=mmse_demod,"all");
 
@@ -55,11 +55,12 @@ semilogy(Eb_N0_dB, ser_ml, '-','Color','#000000','LineWidth',2);
 legend('ZF', 'MMSE', 'ML');
 xlabel('SNR[dB]')
 ylabel('SER');
+ylim([10^-3.5 10^0]);
 title('4 x 4 MIMO, QPSK');
 
 
-function hat = ml_detector(h, y, Nt)
-    qam_table = [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
+function hat = ml_detector(h, y, P, Nt)
+    qam_table = P * [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
     xx = zeros(Nt, 1);
     x_ = zeros(Nt, 1, length(qam_table).^Nt);
 
@@ -73,7 +74,7 @@ function hat = ml_detector(h, y, Nt)
                 for hdx = 1:length(qam_table)
                     xx(4) = qam_table(hdx);
                     x_(:,:,cnt) = xx;
-                    result(cnt) = norm(y - h*xx).^2;
+                    result(cnt) = sum(sum(abs(y - h*xx)));
                     cnt = cnt + 1;
                 end
             end
@@ -87,8 +88,8 @@ end
 function ipHat = qam_demod(input)
     y_re = real(input);
     y_im = imag(input);
-    ipHat(find(y_re < 0 & y_im <= 0)) = -1-1*1j;
-    ipHat(find(y_re >= 0 & y_im > 0)) = 1+1*1j;
-    ipHat(find(y_re < 0 & y_im >= 0)) = -1+1*1j;
-    ipHat(find(y_re >= 0 & y_im < 0)) = 1-1*1j;
+    ipHat(find(y_re < 0 & y_im < 0)) = -1-1*1j;
+    ipHat(find(y_re > 0 & y_im > 0)) = 1+1*1j;
+    ipHat(find(y_re < 0 & y_im > 0)) = -1+1*1j;
+    ipHat(find(y_re > 0 & y_im < 0)) = 1-1*1j;
 end
