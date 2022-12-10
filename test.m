@@ -1,5 +1,6 @@
-clear;
-N = 3*10^4; % number of symbols
+clear all;
+close all;
+N = 10^4; % number of symbols
 Eb_N0_dB = [0:3:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
@@ -13,6 +14,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
     disp(Eb_N0_dB(Eb_idx));
     P = sqrt((10^(Eb_N0_dB(Eb_idx)/10))/Nt);
     x = P/sqrt(2) * x_; % normalization of energy to P
+    cnt_lrzf = 0;
     cnt_mmsesic = 0;
     cnt_zfsic = 0;
     cnt_zf = 0;
@@ -29,6 +31,8 @@ for Eb_idx = 1:length(Eb_N0_dB)
 
         w_mmse = inv(h'*h + 1/P^2*eye(Nt))*h';
 
+        lrzf_demod = lr_zf(x_(:,idx), h, n, P, Nt);
+
         ml_demod = ml_detector(h, y, P, Nt);
 
         zf_demod_ = qam_demod(w_zf * y);
@@ -41,6 +45,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
         mmse_demod = reshape(mmse_demod_,[Nt, 1]);
 
 
+        cnt_lrzf = cnt_lrzf + sum(x_(:,idx)~=lrzf_demod,"all");
         cnt_mmsesic = cnt_mmsesic + sum(x(:,idx)~=mmsesic_demod,"all");
         cnt_zfsic = cnt_zfsic + sum(x(:,idx)~=zfsic_demod,"all");
         cnt_ml = cnt_ml + sum(x(:,idx)~=ml_demod,"all");
@@ -48,6 +53,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
         cnt_mmse = cnt_mmse + sum(x_(:,idx)~=mmse_demod,"all");
 
     end
+    ser_lrzf(Eb_idx) = cnt_lrzf / N;
     ser_mmsesic(Eb_idx) = cnt_mmsesic/N;
     ser_zfsic(Eb_idx) = cnt_zfsic/N;
     ser_ml(Eb_idx) = cnt_ml/N;
@@ -65,6 +71,8 @@ hold on
 semilogy(Eb_N0_dB, ser_zfsic, 'd-','Color','#EDB120','LineWidth',2);
 hold on
 semilogy(Eb_N0_dB, ser_mmsesic, 'x-','Color','#4DBEEE','LineWidth',2);
+hold on
+semilogy(Eb_N0_dB, ser_lrzf, '^-','Color','#77AC30','LineWidth',2);
 legend('ZF', 'MMSE', 'ML', 'ZF-SIC','MMSE-SIC');
 xlabel('SNR[dB]')
 ylabel('SER');
@@ -163,4 +171,65 @@ function x_hat = mmse_sic(w_mmse, h, y, Nt, P)
         y = y - h(:, I) * x_hat1;
         h(:, I) = 0;
     end
+end
+
+function x_hat = lr_zf(x, h, n, P, Nt)
+
+    T = MLLL(h, Nt);
+    z_ = pinv(T)*x;
+    z =  P/sqrt(2) * z_;
+    h_til = h*T;
+
+    y = h_til*z + n;
+
+    z_hat = pinv(h_til) * y;
+    x_hat = reshape(qam_demod(T*z_hat), [Nt, 1]);
+end
+
+function T = MLLL(H,Tx)
+[Q,R] = qr(H);
+%initialize
+lambda = 3/4;
+mm = Tx;
+T     = eye(mm);
+S_flag = 0;
+iter = 0;
+% Set the number of iterations
+iter_max = 5;
+while S_flag == 0 && iter<iter_max
+    S_flag = 1;
+    iter = iter+1;
+  %size reduction
+for k = 2:mm
+   for l=k-1:-1:1
+      mu = round(R(l,k)/R(l,l));
+      if abs(mu) ~= 0
+         R(1:l,k) = R(1:l,k) - mu * R(1:l,l);
+         T(:,k)   = T(:,k)   - mu * T(:,l);
+      end
+   end
+
+    temp_div = norm(R(k-1:k,k));
+   %Siegel Condition
+   if lambda*abs(R(k-1,k-1)) > abs(R(k,k))
+
+      %exchange columns k and k-1
+        temp_r=R(:,k-1);
+        temp_t=T(:,k-1);
+
+        R(:,k-1)=R(:,k);
+        R(:,k)=temp_r;
+        T(:,k-1)=T(:,k);
+        T(:,k)=temp_t;
+      % Given's rotation
+      alpha     = R(k-1,k-1) / temp_div;
+      beta     = R(k,k-1)   / temp_div;
+      Theta = [alpha' beta; -beta alpha];
+
+      R(k-1:k,k-1:end) = Theta * R(k-1:k,k-1:end);
+      S_flag = 0;
+   end
+      k = k+1;
+end
+end
 end
