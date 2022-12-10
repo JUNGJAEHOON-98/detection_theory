@@ -1,5 +1,5 @@
 clear;
-N = 10^4; % number of symbols
+N = 3*10^4; % number of symbols
 Eb_N0_dB = [0:3:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
@@ -13,6 +13,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
     disp(Eb_N0_dB(Eb_idx));
     P = sqrt((10^(Eb_N0_dB(Eb_idx)/10))/Nt);
     x = P/sqrt(2) * x_; % normalization of energy to P
+    cnt_mmsesic = 0;
     cnt_zfsic = 0;
     cnt_zf = 0;
     cnt_mmse = 0;
@@ -25,6 +26,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
 
 
         w_zf = inv(h'* h) * h';
+
         w_mmse = inv(h'*h + 1/P^2*eye(Nt))*h';
 
         ml_demod = ml_detector(h, y, P, Nt);
@@ -32,18 +34,21 @@ for Eb_idx = 1:length(Eb_N0_dB)
         zf_demod_ = qam_demod(w_zf * y);
         zf_demod = reshape(zf_demod_,[Nt, 1]);
 
+        mmsesic_demod = mmse_sic(w_mmse, h, y, Nt, P);
         zfsic_demod = zf_sic(w_zf, h, y, Nt, P);
 
         mmse_demod_ = qam_demod(w_mmse * y);
         mmse_demod = reshape(mmse_demod_,[Nt, 1]);
 
 
+        cnt_mmsesic = cnt_mmsesic + sum(x(:,idx)~=mmsesic_demod,"all");
         cnt_zfsic = cnt_zfsic + sum(x(:,idx)~=zfsic_demod,"all");
         cnt_ml = cnt_ml + sum(x(:,idx)~=ml_demod,"all");
         cnt_zf = cnt_zf + sum(x_(:,idx)~=zf_demod,"all");
         cnt_mmse = cnt_mmse + sum(x_(:,idx)~=mmse_demod,"all");
 
     end
+    ser_mmsesic(Eb_idx) = cnt_mmsesic/N;
     ser_zfsic(Eb_idx) = cnt_zfsic/N;
     ser_ml(Eb_idx) = cnt_ml/N;
     ser_zf(Eb_idx) = cnt_zf/N;
@@ -58,7 +63,9 @@ hold on
 semilogy(Eb_N0_dB, ser_ml, '-','Color','#000000','LineWidth',2);
 hold on
 semilogy(Eb_N0_dB, ser_zfsic, 'd-','Color','#EDB120','LineWidth',2);
-legend('ZF', 'MMSE', 'ML', 'ZF-SIC');
+hold on
+semilogy(Eb_N0_dB, ser_mmsesic, 'x-','Color','#4DBEEE','LineWidth',2);
+legend('ZF', 'MMSE', 'ML', 'ZF-SIC','MMSE-SIC');
 xlabel('SNR[dB]')
 ylabel('SER');
 ylim([10^-3.5 10^0]);
@@ -91,7 +98,6 @@ function hat = ml_detector(h, y, P, Nt)
     hat = x_(:,:,I);
 end
 
-
 function ipHat = qam_demod(input)
     y_re = real(input);
     y_im = imag(input);
@@ -101,31 +107,30 @@ function ipHat = qam_demod(input)
     ipHat(find(y_re > 0 & y_im < 0)) = (1-1*1j);
 end
 
-
 function x_hat = zf_sic(w_zf, h, y, Nt, P)
     w_norm1 = vecnorm(w_zf.');
     [B,I1] = mink(w_norm1, 1,'ComparisonMethod','abs');
     aa = w_zf(I1,:)*y;
     x_hat1 = P/sqrt(2) *qam_demod(aa);
-
     y1 = y-h(:, I1)*x_hat1;
     h(:, I1) = 0;
+
     w_zf2 = pinv(h'*h)*h';
     w_norm2 = vecnorm(w_zf2.');
     [B,I2] = mink(w_norm2, 2,'ComparisonMethod','abs');
     bb = w_zf2(I2(2),:)*y1;
     x_hat2 = P/sqrt(2) *qam_demod(bb);
-
     y2 = y1-h(:, I2(2))*x_hat2;
     h(:, I2(2)) = 0;
+
     w_zf3 = pinv(h'*h)*h';
     w_norm3 = vecnorm(w_zf3.');
     [B,I3] = mink(w_norm3, 3,'ComparisonMethod','abs');
     cc = w_zf3(I3(3),:)*y2;
     x_hat3 = P/sqrt(2) *qam_demod(cc);
-
     y3 = y2-h(:, I3(3))*x_hat3;
     h(:, I3(3)) = 0;
+
     w_zf4 = pinv(h'*h)*h';
     w_norm4 = vecnorm(w_zf4.');
     [B,I4] = mink(w_norm4, 4,'ComparisonMethod','abs');
@@ -138,4 +143,24 @@ function x_hat = zf_sic(w_zf, h, y, Nt, P)
     x_hat(I3(3)) = x_hat3;
     x_hat(I4(4)) = x_hat4;
 
+end
+
+function x_hat = mmse_sic(w_mmse, h, y, Nt, P)
+    x_hat = zeros(Nt,1);
+
+    for i = 1:Nt
+        w_mmse = pinv(h'*h + 1/P^2*eye(Nt))*h';
+
+        signal_power = vecnorm(diag(w_mmse*h), 2, 2).^(2);
+        interference = vecnorm(w_mmse*h - diag(diag(w_mmse*h)), 2, 2).^(2);
+        w_norm = vecnorm(w_mmse, 2, 2);
+
+        sinr = (signal_power.*(P/sqrt(2))) ./ (interference.*(P/sqrt(2)) + w_norm);
+        [B,I] = max(sinr);
+
+        x_hat1 = P/sqrt(2) * qam_demod(w_mmse(I,:) * y);
+        x_hat(I) = x_hat1;
+        y = y - h(:, I) * x_hat1;
+        h(:, I) = 0;
+    end
 end
