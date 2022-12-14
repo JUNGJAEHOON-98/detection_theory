@@ -1,6 +1,6 @@
 clear all;
 close all;
-N = 10^4; % number of symbols
+N = 10^3; % number of symbols
 Eb_N0_dB = [0:3:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
@@ -31,6 +31,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
 
         w_mmse = inv(h'*h + 1/P^2*eye(Nt))*h';
 
+        % a = x(:,idx)
         lrzf_demod = lr_zf(x_(:,idx), h, n, P, Nt);
 
         ml_demod = ml_detector(h, y, P, Nt);
@@ -45,7 +46,7 @@ for Eb_idx = 1:length(Eb_N0_dB)
         mmse_demod = reshape(mmse_demod_,[Nt, 1]);
 
 
-        cnt_lrzf = cnt_lrzf + sum(x_(:,idx)~=lrzf_demod,"all");
+        cnt_lrzf = cnt_lrzf + sum(round(x(:,idx), 10)~=round(lrzf_demod, 10),"all");
         cnt_mmsesic = cnt_mmsesic + sum(x(:,idx)~=mmsesic_demod,"all");
         cnt_zfsic = cnt_zfsic + sum(x(:,idx)~=zfsic_demod,"all");
         cnt_ml = cnt_ml + sum(x(:,idx)~=ml_demod,"all");
@@ -174,6 +175,9 @@ function x_hat = mmse_sic(w_mmse, h, y, Nt, P)
 end
 
 function x_hat = lr_zf(x, h, n, P, Nt)
+    qam_table = P/sqrt(2) * [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
+    xx = zeros(Nt, 1);
+    z1_set_ = zeros(Nt, 1, length(qam_table).^Nt);
 
     T = MLLL(h, Nt);
     z_ = pinv(T)*x;
@@ -183,7 +187,30 @@ function x_hat = lr_zf(x, h, n, P, Nt)
     y = h_til*z + n;
 
     z_hat = pinv(h_til) * y;
-    x_hat = reshape(qam_demod(T*z_hat), [Nt, 1]);
+
+    cnt = 1;
+
+    for idx = 1:length(qam_table)
+         xx(1) = qam_table(idx);
+         for jdx = 1:length(qam_table)
+             xx(2) = qam_table(jdx);
+             for kdx = 1:length(qam_table)
+                 xx(3) = qam_table(kdx);
+                 for hdx = 1:length(qam_table)
+                     xx(4) = qam_table(hdx);
+                     z = pinv(T) * xx;
+                     z1_set_(:,:,cnt) = z;
+                     result(cnt) = sum(abs(z_hat - z));
+                     cnt = cnt + 1;
+                end
+            end
+        end
+    end
+
+    [M I] = min(result);
+    z_hat = z1_set_(:, I);
+
+    x_hat = T*z_hat;
 end
 
 function T = MLLL(H,Tx)
