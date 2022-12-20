@@ -1,37 +1,39 @@
 clear all;
 close all;
-N = 10^3; % number of symbols
+N = 10^5; % number of symbols
 Eb_N0_dB = [0:3:30]; % multiple Eb/N0 values
 Nt = 4;
 Nr = 4;
 
 ip = [(2*(rand(1,N)>0.5)-1) + 1j*(2*(rand(1,N)>0.5)-1)];
-
 x_ = reshape(ip, [Nt, N/Nt]);
-
 
 for Eb_idx = 1:length(Eb_N0_dB)
     disp(Eb_N0_dB(Eb_idx));
     P = sqrt((10^(Eb_N0_dB(Eb_idx)/10))/Nt);
     x = P/sqrt(2) * x_; % normalization of energy to P
+
+    cnt_sd = 0;
+    cnt_sdr = 0;
     cnt_lrzf = 0;
     cnt_mmsesic = 0;
     cnt_zfsic = 0;
     cnt_zf = 0;
     cnt_mmse = 0;
     cnt_ml = 0;
+    tic()
     for idx = 1:N/Nt
     % Channel and noise Noise addition
         h = 1/sqrt(2)*[randn(Nr, Nt) + 1j*randn(Nr, Nt)]; % Rayleigh channel
-        n = 1/sqrt(2)*[randn(Nr,1) + 1j*randn(Nr,1)];  % white gaussian noise, 0dB variance
+        n = 1/sqrt(2)*(randn(Nr,1) + 1j*randn(Nr,1));  % white gaussian noise, 0dB variance
         y = h * x(:,idx) + n;
 
 
         w_zf = inv(h'* h) * h';
-
         w_mmse = inv(h'*h + 1/P^2*eye(Nt))*h';
 
-        % a = x(:,idx)
+        sd_demode = sd_detector(h, x(:,idx), n, Nt, P);
+        sdr_demode = sdr_detector(h, x(:,idx) ,n, P, Nt);
         lrzf_demod = lr_zf(x_(:,idx), h, n, P, Nt);
 
         ml_demod = ml_detector(h, y, P, Nt);
@@ -46,6 +48,8 @@ for Eb_idx = 1:length(Eb_N0_dB)
         mmse_demod = reshape(mmse_demod_,[Nt, 1]);
 
 
+        cnt_sd = cnt_sd + sum(x_(:,idx)~=sd_demode,"all");
+        cnt_sdr = cnt_sdr + sum(x(:,idx)~=sdr_demode,"all");
         cnt_lrzf = cnt_lrzf + sum(round(x(:,idx), 10)~=round(lrzf_demod, 10),"all");
         cnt_mmsesic = cnt_mmsesic + sum(x(:,idx)~=mmsesic_demod,"all");
         cnt_zfsic = cnt_zfsic + sum(x(:,idx)~=zfsic_demod,"all");
@@ -54,6 +58,9 @@ for Eb_idx = 1:length(Eb_N0_dB)
         cnt_mmse = cnt_mmse + sum(x_(:,idx)~=mmse_demod,"all");
 
     end
+    toc()
+    ser_sd(Eb_idx) = cnt_sd / N;
+    ser_sdr(Eb_idx) = cnt_sdr / N;
     ser_lrzf(Eb_idx) = cnt_lrzf / N;
     ser_mmsesic(Eb_idx) = cnt_mmsesic/N;
     ser_zfsic(Eb_idx) = cnt_zfsic/N;
@@ -63,24 +70,136 @@ for Eb_idx = 1:length(Eb_N0_dB)
 end
 
 figure
-semilogy(Eb_N0_dB, ser_zf, 'v--','Color','#EDB120','LineWidth',2);
-hold on
-semilogy(Eb_N0_dB, ser_mmse, '^--','Color','#4DBEEE','LineWidth',2);
-hold on
 semilogy(Eb_N0_dB, ser_ml, '-','Color','#000000','LineWidth',2);
+hold on
+semilogy(Eb_N0_dB, ser_sd, 'o-','Color', '#FF0000','LineWidth',2);
+hold on
+semilogy(Eb_N0_dB, ser_sdr, 'x-','Color', '#0000FF','LineWidth',2);
+hold on
+semilogy(Eb_N0_dB, ser_lrzf, '^-','Color','#77AC30','LineWidth',2);
 hold on
 semilogy(Eb_N0_dB, ser_zfsic, 'd-','Color','#EDB120','LineWidth',2);
 hold on
 semilogy(Eb_N0_dB, ser_mmsesic, 'x-','Color','#4DBEEE','LineWidth',2);
 hold on
-semilogy(Eb_N0_dB, ser_lrzf, '^-','Color','#77AC30','LineWidth',2);
-legend('ZF', 'MMSE', 'ML', 'ZF-SIC','MMSE-SIC');
+semilogy(Eb_N0_dB, ser_zf, 'v--','Color','#EDB120','LineWidth',2);
+hold on
+semilogy(Eb_N0_dB, ser_mmse, '^--','Color','#4DBEEE','LineWidth',2);
+
+legend('ML', 'SD with d^2=9', 'SDR', 'LR-ZF', 'ZF-SIC', 'MMSE-SIC', 'ZF', 'MMSE');
 xlabel('SNR[dB]')
 ylabel('SER');
 ylim([10^-3.5 10^0]);
 title('4 x 4 MIMO, QPSK');
 grid on
 
+function result = sd_detector(h, x, n, Nt, P)
+    y = (h * x + n)/ (P/sqrt(2));
+    h_re_im = [real(h) -imag(h); imag(h) real(h)];
+    y_re_im = [real(y); imag(y)];
+    xx = zeros(2*Nt,1);
+
+    w_zf = pinv(h_re_im);
+
+    G = h_re_im.'*h_re_im;
+    R = chol(G);
+    x_hat = w_zf*y_re_im;
+
+    result_x = x_hat;
+
+    up_bound = zeros(1,2*Nt);
+    d1_square = zeros(1,2*Nt); % d_k
+     % s_k
+
+    x_hat_k1_k2 = zeros(1,2*Nt); % s_^_k|k+1
+    caseno = 1;
+
+    while (caseno~=0)
+        switch (caseno)
+            case 1
+                k = 2*Nt;
+                d_square = 9;
+                d1_square(:,k) = d_square;
+                max_distance = -Inf;
+                x_hat_k1_k2(k) = x_hat(Nt*2);
+                caseno = 2;
+            case 2
+                if d1_square(:,k)<0
+                    up_bound(:,k) = 1;
+                    low_bound =1;
+                else
+                    up_bound(:,k) = (sqrt(d1_square(:,k))/R(k,k)) + x_hat_k1_k2(:,k);
+                    low_bound = -sqrt(d1_square(:,k))/R(k,k) + x_hat_k1_k2(:,k);
+                    up_bound(:,k) = 1-2*(up_bound(:,k)<1);
+                    low_bound = 1-2*(low_bound<-1)-2;
+                end
+                xx(k,:) = low_bound;
+                caseno = 3;
+            case 3
+                xx(k,:) = xx(k,:) + 2;
+                if xx(k,:) <= up_bound(:,k)
+                    caseno = 5;
+                else
+                    caseno = 4;
+                end
+            case 4
+                k = k + 1;
+                if k == 2*Nt +1
+                    break;
+                else
+                    caseno = 3;
+                end
+            case 5
+                if k == 1
+                    caseno = 6;
+                else
+                    k = k - 1;
+                    d1_square(:,k) = d1_square(:,k+1) - (R(k+1,k+1) * (xx(k+1,:) - x_hat_k1_k2(:,k+1)))^2;
+                    x_hat_k1_k2(:,k) = x_hat(k) - (1/R(k,k)) * ( R(k,k+1:end) * ( xx(k+1:end,:) - x_hat(k+1:end) ) );
+                    caseno = 2;
+                end
+            case 6
+                tmp_distance = d1_square(:,1)-(R(k,k)*(xx(k)-x_hat_k1_k2(k)))^2;
+
+                if tmp_distance >= max_distance
+                    max_distance = tmp_distance;
+                    result_x = xx;
+                end
+                caseno = 3;
+        end
+    end
+    %test_1 = (x_hat>0)-(x_hat<0);
+    %R_inv_distance = 9 - sum((R*(test_1 -x_hat)).^2);
+    %result_distance = 9 - sum((R*(result_x-x_hat)).^2);
+    real_val = (result_x(1:Nt)>0)-(result_x(1:Nt)<0);
+    imag_val = (result_x(Nt+1:2*Nt)>0)-(result_x(Nt+1:2*Nt)<0);
+    result = real_val +1j*imag_val;
+
+end
+
+function x_hat = sdr_detector(h, x ,n, P, Nt)
+    y = (h * x + n)/ (P/sqrt(2));
+    y_re_im = [real(y);imag(y)];
+    h_re_im = [real(h) -imag(h); imag(h) real(h)];
+    L = [h_re_im.'*h_re_im -h_re_im.'*y_re_im; -y_re_im.'*h_re_im y_re_im.'*y_re_im];
+
+    cvx_begin quiet;
+        variable X(2*Nt+1, 2*Nt+1);
+        minimize(trace(L*X));
+        diag(X)==1;
+        X == semidefinite(2*Nt+1);
+    cvx_end;
+
+    [V, D] = eig(X);
+    [M I] = max(diag(D));
+    a = V(:, I);
+    if a(length(V)) < 0
+       a = -a;
+    end
+    demode_ = a(1:Nt)+1j*a(Nt+1:2*Nt);
+    x_hat = reshape((P/sqrt(2)) *qam_demod(demode_), [Nt, 1]);
+
+end
 
 function hat = ml_detector(h, y, P, Nt)
     qam_table = P/sqrt(2) * [-1-1*1j, 1+1*1j, -1+1*1j, 1-1*1j];
